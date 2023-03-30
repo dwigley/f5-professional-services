@@ -1,0 +1,103 @@
+---
+- name: Create SSLO SSL Outbound Configuration
+  hosts: all
+  gather_facts: False
+
+  collections:
+    - f5networks.f5_bigip
+  connection: httpapi
+
+
+
+
+  vars:
+    ansible_host: "10.155.207.68"
+    ansible_httpapi_port: 443
+    ansible_user: "admin"
+    ansible_httpapi_password: "admin"
+    ansible_network_os: f5networks.f5_bigip.bigip
+    ansible_httpapi_use_ssl: yes
+    ansible_httpapi_validate_certs: no
+
+  tasks:
+
+
+    - name: Create an SSLO outbound SSL config
+      bigip_sslo_config_ssl:
+        name: "c3_a138_ssl"
+        state: "present"
+        client_settings:
+          proxy_type: "forward"
+          ca_cert: "/Common/default.crt"
+          ca_key: "/Common/default.key"
+
+    - name: Create TC SSLO L2 Service
+      bigip_sslo_service_layer2:
+        name: "tc_service"
+        devices:
+          - name: "c3_a138_service"
+            ratio: 1
+            vlan_in: "/Common/c3_a138_trust_decrypt"
+            vlan_out: "/Common/c3_a138_untrust_decrypt"
+        ip_offset: 1
+        port_remap: 8888 
+
+    - name: Create Security Service Chain
+      bigip_sslo_config_service_chain:
+        name: "tc_sc"
+        services:
+          - service_name: "tc_service"
+            type: "L2"
+     
+    - name: Create SSLO intercept policy
+      bigip_sslo_config_policy:
+        name: "intercept"
+
+    - name: Create SSLO bypass policy
+      bigip_sslo_config_policy:
+        name: "bypass"
+
+    - name: Create UDP QUIC blocking policy
+      bigip_sslo_config_policy:
+        name: "QUIC_block"
+        policy_rules:
+          - name: "Block_QUIC"
+            match_type: "match_any"
+            policy_action: "reject"
+            conditions:
+              - condition_type: "udp_l7_protocol_lookup"
+                option_udp_protocol:
+                  - "quic"
+
+    - name: Create SSLO intercept topology
+      bigip_sslo_config_topology:
+        name: "c3_a138_decrypt"
+        topology_type: "outbound_l3"
+        ssl_settings: "c3_a138_ssl"
+        security_policy: "intercept"
+        vlans: "/Common/fake_intercept"
+        source: "0.0.0.0/0"
+        dest: "0.0.0.0/0" 
+        port: 0       
+             
+    - name: Create SSLO bypass topology
+      bigip_sslo_config_topology:
+        name: "c3_a138_bypass"
+        topology_type: "outbound_l3"
+        security_policy: "bypass"
+        ssl_settings: "c3_a138_ssl"
+        vlans: "/Common/fake_bypass"
+        source: "0.0.0.0/0"
+        dest: "0.0.0.0/0"
+        port: 0
+      
+    - name: Create SSLO QUIC blocking topology
+      bigip_sslo_config_topology:
+        name: "c3_a138_quic"
+        topology_type: "outbound_l3"
+        security_policy: "QUIC_block"
+        vlans: "/Common/Internal"
+        protocol: "udp"
+        source: "0.0.0.0/0"
+        dest: "0.0.0.0/0"
+        port: 0
